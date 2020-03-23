@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Build and push Docker images
+      uses: docker/build-push-action@v1.0.0
+      with:
+        username: ${{ secrets.dockerregisty_username }}
+        password: ${{ secrets.dockerregisty_password }}
+        repository: ${{ secrets.dockerregisty_repository }}
+        tags: latest
+        push: true
