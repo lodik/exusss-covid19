@@ -5,7 +5,9 @@ extern crate serde_json;
 use std::collections::HashMap;
 use std::env;
 
+use anyhow::{anyhow, Result};
 use async_socks5::Auth;
+use chrono::{Date, Duration, Local, SecondsFormat, Utc};
 use futures::StreamExt;
 use handlebars::Handlebars;
 use hyper::Uri;
@@ -15,16 +17,10 @@ use std::str::FromStr;
 use telegram_bot::connector::hyper::HyperConnector;
 use telegram_bot::*;
 
-#[derive(Deserialize, Serialize)]
-struct LatestResult {
-    confirmed: i64,
-    deaths: i64,
-    recovered: i64,
-}
-
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Copy, Clone, Debug)]
 struct CovidCountryResult {
-    latest: LatestResult,
+    #[serde(alias = "Cases")]
+    cases: i64,
 }
 
 #[tokio::main]
@@ -60,17 +56,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut reg = Handlebars::new();
     reg.register_template_string(
-        "UA",
-        String::from("У хохлов, по последним данным: {{ confirmed }} всего, {{ deaths }} умерло, {{ recovered }} вылечилось"),
+        "ukraine",
+        String::from("У хохлов, по последним данным всего заразилось {{ cases }}"),
     )?;
     reg.register_template_string(
-        "RU",
-        String::from("У москалів, за останніми даними: {{ confirmed }} все, {{ deaths }} померло, {{ recovered }} вилікувалося"),
+        "russia",
+        String::from("У москалів, за останніми даними заразилося всього {{ cases }}"),
     )?;
 
     let mut country_to_country_code: HashMap<&str, String> = HashMap::new();
-    country_to_country_code.insert("хохлов", String::from("UA"));
-    country_to_country_code.insert("москалів", String::from("RU"));
+    country_to_country_code.insert("хохлов", String::from("ukraine"));
+    country_to_country_code.insert("москалів", String::from("russia"));
 
     let mut stream = api.stream();
     while let Some(update) = stream.next().await {
@@ -82,14 +78,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(county_code) = country_to_country_code.get(country.as_str()) {
                         async {
                             let county_code = county_code.clone();
-                            let response = get_covid_stats(county_code.as_str())
-                                .await
-                                .map(|stats| {
-                                    reg.render(county_code.as_str(), &json!(stats))
-                                        .map(|msg| message.text_reply(msg))
-                                        .unwrap()
-                                })
-                                .unwrap();
+                            let response = get_covid_stats(
+                                county_code.as_str(),
+                                Utc::now().date() - Duration::days(1),
+                            )
+                            .await
+                            .map(|stats| {
+                                reg.render(county_code.as_str(), &json!(stats))
+                                    .map(|msg| message.text_reply(msg))
+                                    .unwrap()
+                            })
+                            .unwrap();
                             api.send(response).await
                         }
                         .await?;
@@ -101,17 +100,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn get_covid_stats(country: &str) -> Result<LatestResult, Box<dyn std::error::Error>> {
-    let country_results: CovidCountryResult = reqwest::get(
+async fn get_covid_stats(country: &str, date: Date<Utc>) -> Result<CovidCountryResult> {
+    let country_results = reqwest::get(
         format!(
-            "https://coronavirus-tracker-api.herokuapp.com/v2/locations?country_code={}",
-            country
+            "https://api.covid19api.com/country/{}/status/confirmed/live?from={}&to={}",
+            country,
+            date.and_hms(0, 0, 0)
+                .to_rfc3339_opts(SecondsFormat::Secs, true),
+            date.and_hms(23, 59, 59)
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
         )
         .as_str(),
     )
     .await?
-    .json::<CovidCountryResult>()
+    .json::<Vec<CovidCountryResult>>()
     .await?;
 
-    Ok(country_results.latest)
+    country_results
+        .first()
+        .ok_or(anyhow!("no data"))
+        .map(|c| c.clone())
 }

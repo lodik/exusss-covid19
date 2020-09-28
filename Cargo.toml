@@ -1,6 +1,6 @@
 [package]
 name = "exusss-covid19"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["lodik <lodik@users.noreply.github.com>"]
 edition = "2018"
 
@@ -19,3 +19,5 @@ hyper-socks2 = "0.4"
 async-socks5 = "0.3"
 reqwest = { version = "0.10", features = ["json"] }
 handlebars = "3.0.1"
+chrono = "0.4"
+anyhow = "1.0"
